@@ -186,6 +186,47 @@ def update_plan(plan_id: str, plan_in: Any) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------- rendering
+def check_renderable(plan_id: str) -> Dict[str, Any]:
+    """Quick checks done before a render job starts, so the user gets an immediate answer."""
+    try:
+        record = plans.load_plan(plan_id)
+    except fs.RecordNotFoundError:
+        raise OrchestratorError("Plan not found", 404)
+    if record.get("status") == "rendering":
+        raise OrchestratorError("This plan is already being rendered", 409)
+    sources = build_sources()
+    try:
+        plan = validate_plan(record["plan"], sources)
+    except PlanValidationError as exc:
+        raise OrchestratorError("Plan is not valid: " + "; ".join(exc.errors), 422)
+    gone = sorted({str(sources[c["source"]]["name"]) for c in plan["clips"] if not sources[c["source"]]["available"]})
+    if gone:
+        raise OrchestratorError(f"Source file(s) no longer exist: {', '.join(gone)}", 410)
+    return record
+
+
+def set_output(plan_id: str, fmt: Optional[str] = None, quality: Optional[str] = None, fit: Optional[str] = None) -> Dict[str, Any]:
+    """Change only the output format / quality / fit of a plan (validated like any other edit)."""
+    try:
+        record = plans.load_plan(plan_id)
+    except fs.RecordNotFoundError:
+        raise OrchestratorError("Plan not found", 404)
+    plan = dict(record["plan"])
+    out = dict(plan.get("output") or {})
+    for key, value in (("format", fmt), ("quality", quality), ("fit", fit)):
+        if value is not None:
+            out[key] = value
+    plan["output"] = out
+    try:
+        record["plan"] = validate_plan(plan, build_sources())
+    except PlanValidationError as exc:
+        raise OrchestratorError("Output settings rejected: " + "; ".join(exc.errors), 422)
+    record["status"] = "draft"
+    record["render"] = None
+    plans.save_plan(record)
+    return record
+
+
 def render_plan(
     plan_id: str,
     progress_cb: Optional[Callable[[float], None]] = None,
@@ -215,8 +256,14 @@ def render_plan(
 
     try:
         result = renderer.render(plan, sources, plan_id, progress_cb=progress_cb, cancel=cancel)
-    except BaseException:
+    except renderer.RenderCancelled as exc:
+        record["status"] = "cancelled"
+        record["render"] = {"state": "cancelled", "error": str(exc), "finished_at": fs.utc_now()}
+        plans.save_plan(record)
+        raise
+    except BaseException as exc:
         record["status"] = "failed"
+        record["render"] = {"state": "failed", "error": str(exc), "finished_at": fs.utc_now()}
         plans.save_plan(record)
         raise
 

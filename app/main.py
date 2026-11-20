@@ -1,4 +1,4 @@
-"""FastAPI entry point (Phase 1: setup + video ingestion).
+"""FastAPI entry point.
 
 Run:  uvicorn app.main:app --host 127.0.0.1 --port 8000
 Docs: http://127.0.0.1:8000/docs
@@ -19,6 +19,8 @@ from app.analyzers.video_analyzer import VideoProbeError, extract_metadata, gene
 from app.config import settings
 from app.services import file_service as fs
 from app.services.locks import processing_lock
+from app.services import plan_service
+from app.engine import renderer
 from app.services.system_check import run_checks
 from app.api_gameplay import router as gameplay_router
 from app.api_plan import router as plan_router
@@ -31,10 +33,13 @@ _processing_lock = processing_lock
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings.ensure_dirs()
+    # Nothing is rendering at startup: fix plans stuck in 'rendering' and delete half-finished temp files.
+    plan_service.recover_interrupted()
+    renderer.cleanup_stale_temp()
     yield
 
 
-app = FastAPI(title="Local AI Gaming Video Editor", version="0.6.0", lifespan=lifespan)
+app = FastAPI(title="Local AI Gaming Video Editor", version="1.0.0", lifespan=lifespan)
 app.include_router(reference_router)
 app.include_router(gameplay_router)
 app.include_router(plan_router)

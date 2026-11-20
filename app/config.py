@@ -79,6 +79,16 @@ class Settings:
     test_crf: int = 28
     min_free_disk_gb: float = 5.0          # health-check warning threshold
     min_free_render_gb: float = 1.5        # refuse to render below this
+    # 0 = let FFmpeg choose. Set e.g. 2 to keep the PC responsive while rendering.
+    render_threads: int = _env_int("GVE_RENDER_THREADS", 0)
+    # Run FFmpeg at below-normal priority on Windows so the PC stays usable.
+    render_low_priority: bool = os.environ.get("GVE_RENDER_LOW_PRIORITY", "1") != "0"
+    keep_temp_files: bool = os.environ.get("GVE_KEEP_TEMP", "0") == "1"   # debugging only
+    # Cuts are moved at most this many seconds to land on a music loudness jump.
+    max_beat_shift: float = _env_float("GVE_MAX_BEAT_SHIFT", 0.3)
+    zoom_end: float = _env_float("GVE_ZOOM_END", 1.15)   # zoom_in effect ends at 115 % scale
+    music_fade_in: float = 0.5
+    music_fade_out: float = 1.5
 
     # --- Derived paths -----------------------------------------------------
     @property

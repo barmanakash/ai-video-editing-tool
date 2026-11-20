@@ -2,14 +2,18 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
+from pathlib import Path
 
 from fastapi import APIRouter, Body, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from app.agents import orchestrator
 from app.agents.orchestrator import OrchestratorError
+from app.config import settings
 from app.services import file_service as fs
 from app.services import plan_service as plans
+from app.services import render_jobs
 from app.services.locks import processing_lock
 
 router = APIRouter(prefix="/plans", tags=["plans"])
@@ -83,6 +87,8 @@ def get_plan(plan_id: str) -> Dict[str, Any]:
 @router.put("/{plan_id}")
 def edit_plan(plan_id: str, plan: Dict[str, Any] = Body(..., description="A full plan object (copy it from GET /plans/{id} and edit)")) -> Dict[str, Any]:
     """Replace the plan with your edited version. It is validated exactly like a model-made plan."""
+    if render_jobs.is_active(plan_id):
+        raise HTTPException(status_code=409, detail="This plan is being rendered. Cancel the render first.")
     try:
         return orchestrator.update_plan(plan_id, plan)
     except OrchestratorError as exc:
@@ -94,5 +100,76 @@ def edit_plan(plan_id: str, plan: Dict[str, Any] = Body(..., description="A full
 @router.delete("/{plan_id}")
 def delete_plan(plan_id: str, delete_output: bool = False) -> Dict[str, Any]:
     _get_or_404(plan_id)
+    if render_jobs.is_active(plan_id):
+        raise HTTPException(status_code=409, detail="This plan is being rendered. Cancel the render first.")
     plans.delete_plan(plan_id, delete_output=delete_output)
     return {"deleted": plan_id}
+
+
+# ----------------------------------------------------------------- rendering
+class RenderRequest(BaseModel):
+    format: Optional[str] = Field(default=None, description="Change the output: youtube (16:9) or instagram (9:16). Leave empty to keep the plan's setting.")
+    quality: Optional[str] = Field(default=None, description="test (small, fast preview) or full (1920x1080 / 1080x1920)")
+    fit: Optional[str] = Field(default=None, description="crop (fill the frame) or pad (keep everything, add black bars)")
+
+
+@router.post("/{plan_id}/render", status_code=202)
+def start_render(plan_id: str, req: Optional[RenderRequest] = Body(default=None)) -> Dict[str, Any]:
+    """Render the plan with FFmpeg in the background. Poll GET /plans/{id}/render for progress.
+
+    Optional body: {"format": "instagram", "quality": "full"} changes the output settings first.
+    Only one heavy job runs at a time, so this returns 409 while another one is busy.
+    """
+    try:
+        if render_jobs.is_active(plan_id):
+            raise HTTPException(status_code=409, detail="This plan is already being rendered")
+        if req is not None and (req.format or req.quality or req.fit):
+            orchestrator.set_output(plan_id, req.format, req.quality, req.fit)
+        orchestrator.check_renderable(plan_id)
+        job = render_jobs.start(plan_id)
+    except OrchestratorError as exc:
+        raise _error(exc)
+    except render_jobs.JobBusyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {**job.to_dict(), "status_url": f"/plans/{plan_id}/render", "output_url": f"/plans/{plan_id}/output"}
+
+
+@router.get("/{plan_id}/render")
+def render_status(plan_id: str) -> Dict[str, Any]:
+    """Progress of the running render, or the result of the last one (including the quality report)."""
+    record = _get_or_404(plan_id)
+    job = render_jobs.get(plan_id)
+    return {
+        "plan_id": plan_id,
+        "plan_status": record.get("status"),
+        "job": job.to_dict() if job else None,
+        "render": record.get("render"),
+    }
+
+
+@router.post("/{plan_id}/render/cancel")
+def cancel_render(plan_id: str) -> Dict[str, Any]:
+    _get_or_404(plan_id)
+    if not render_jobs.cancel(plan_id):
+        raise HTTPException(status_code=409, detail="No render is running for this plan")
+    return {"plan_id": plan_id, "message": "Cancel requested; FFmpeg is being stopped"}
+
+
+@router.get("/{plan_id}/output")
+def download_output(plan_id: str):
+    """Download (or play in the browser) the finished video. Only available after a passed quality check."""
+    record = _get_or_404(plan_id)
+    render = record.get("render") or {}
+    if record.get("status") != "completed" or not render.get("output_path"):
+        detail = "The video is not ready."
+        if record.get("status") == "failed_quality":
+            detail = "The video failed the quality check: " + str((render.get("quality_report") or {}).get("summary"))
+        raise HTTPException(status_code=409, detail=detail)
+    path = Path(render["output_path"])
+    try:  # only ever serve files from the outputs folder
+        path.resolve().relative_to(settings.outputs_dir.resolve())
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Output file is outside the outputs folder")
+    if not path.is_file():
+        raise HTTPException(status_code=410, detail="The output file was deleted from disk")
+    return FileResponse(path, media_type="video/mp4", filename=path.name)

@@ -86,3 +86,26 @@ def delete_plan(plan_id: str, delete_output: bool = False) -> None:
             except (ValueError, OSError):
                 pass
     _path(plan_id).unlink(missing_ok=True)
+
+
+def recover_interrupted() -> int:
+    """Call once at startup: a plan still marked 'rendering' lost its render (crash / restart)."""
+    fixed = 0
+    folder = settings.plans_dir
+    if not folder.is_dir():
+        return fixed
+    for f in folder.glob("*.json"):
+        try:
+            record = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if record.get("status") == "rendering":
+            record["status"] = "failed"
+            record["render"] = {
+                "state": "failed",
+                "error": "The render was interrupted (the application stopped). Start it again.",
+                "finished_at": fs.utc_now(),
+            }
+            save_plan(record)
+            fixed += 1
+    return fixed
