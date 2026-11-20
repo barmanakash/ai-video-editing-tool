@@ -1,0 +1,10 @@
+fastapi>=0.110
+uvicorn>=0.29
+python-multipart>=0.0.9
+opencv-python>=4.8
+numpy>=1.24
+scenedetect>=0.6.4
+
+# Dev / testing only
+pytest>=8.0
+httpx>=0.27

@@ -1,0 +1,18 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Large / generated data stays out of git
+data/uploads/*
+data/analysis/*
+data/thumbnails/*
+data/temp/*
+outputs/*
+!**/.gitkeep
+
+*.mp4
+*.mkv
+*.mov
+*.avi
+*.webm
