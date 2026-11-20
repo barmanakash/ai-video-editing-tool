@@ -19,7 +19,7 @@ Plan shape (all keys optional except `clips`):
   ],
   "transitions": ["cut" | "crossfade" | "fadeblack" | "fadewhite" | "slideleft"],   # one per join
   "audio": {"use_uploaded_music": false, "music_path": null,
-            "music_volume": 0.7, "game_audio_volume": 1.0},
+            "music_volume": 0.7, "game_audio_volume": 1.0, "sync_cuts_to_music": true},
   "color": {"brightness": 0.0, "contrast": 1.0, "saturation": 1.0}
 }
 """
@@ -200,6 +200,7 @@ def validate_plan(plan: Any, sources: Dict[str, Dict[str, Any]]) -> Dict[str, An
     music_volume = _num(au.get("music_volume"), "audio.music_volume", errors, 0, 1.5, default=0.7)
     game_volume = _num(au.get("game_audio_volume"), "audio.game_audio_volume", errors, 0, 2.0,
                        default=0.4 if use_music else 1.0)
+    sync_cuts = bool(au.get("sync_cuts_to_music", True))
 
     # ---- colour ---------------------------------------------------------
     co = plan.get("color") or {}
@@ -226,6 +227,7 @@ def validate_plan(plan: Any, sources: Dict[str, Dict[str, Any]]) -> Dict[str, An
             "music_path": music_path,
             "music_volume": music_volume,
             "game_audio_volume": game_volume,
+            "sync_cuts_to_music": sync_cuts,
         },
         "color": {"brightness": brightness, "contrast": contrast, "saturation": saturation},
         "total_duration_estimate": round(total, 2),

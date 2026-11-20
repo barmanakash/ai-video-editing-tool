@@ -20,6 +20,8 @@ from app.config import settings
 from app.services import file_service as fs
 from app.services.locks import processing_lock
 from app.services.system_check import run_checks
+from app.api_gameplay import router as gameplay_router
+from app.api_plan import router as plan_router
 from app.api_reference import router as reference_router
 
 # Heavy work (ffmpeg / OpenCV) runs one job at a time to protect 8 GB of RAM.
@@ -32,8 +34,10 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Local AI Gaming Video Editor", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="Local AI Gaming Video Editor", version="0.6.0", lifespan=lifespan)
 app.include_router(reference_router)
+app.include_router(gameplay_router)
+app.include_router(plan_router)
 
 
 class RegisterRequest(BaseModel):
