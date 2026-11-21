@@ -1,0 +1,148 @@
+{
+  "profile_version": 1,
+  "id": "70c870f0e1c7",
+  "name": "vidssave.com Speed Throws Kid Over in GTA6 💀💀  #gta6memes #gta6 #ishowspeed #speed 720P.mp4",
+  "created_at": "2026-11-21T07:37:28+00:00",
+  "source": {
+    "original_name": "vidssave.com Speed Throws Kid Over in GTA6 💀💀  #gta6memes #gta6 #ishowspeed #speed 720P.mp4",
+    "duration_seconds": 27.2,
+    "analyzed_seconds": 27.2,
+    "truncated": false
+  },
+  "analysis_settings": {
+    "max_seconds": 300,
+    "flow_fps": 4,
+    "frame_analysis_fps": 60.0,
+    "frame_analysis_resolution": "160x284",
+    "scene_detection": {
+      "threshold": 27.0,
+      "frame_skip": 2,
+      "min_scene_len_frames": 15
+    }
+  },
+  "format": {
+    "width": 720,
+    "height": 1280,
+    "aspect_ratio": "9:16",
+    "orientation": "portrait",
+    "fps": 60.0
+  },
+  "pacing": {
+    "scene_count": 1,
+    "average_scene_duration": 27.2,
+    "median_scene_duration": 27.2,
+    "shortest_scene": 27.2,
+    "longest_scene": 27.2,
+    "cuts_per_minute": 0.0,
+    "pace_label": "slow",
+    "duration_variability": 0.0,
+    "rhythm_regularity": "regular",
+    "pace_trend": "unknown"
+  },
+  "transitions": {
+    "hard_cuts": 0,
+    "dark_dips": 0,
+    "dark_dip_times": [],
+    "bright_flashes": 0,
+    "bright_flash_times": [],
+    "note": "Only fades through black and white flashes are estimated. Dissolves, wipes and stylised transitions are NOT detected."
+  },
+  "slow_motion": {
+    "window_ratio": 0.444,
+    "likely_used": true,
+    "constant_frame_duplication": false,
+    "confidence": "low",
+    "note": "Heuristic based on repeated frames. Interpolated (smooth) slow motion is not detectable this way."
+  },
+  "camera": {
+    "samples": 108,
+    "average_motion": 0.121,
+    "motion_label": "calm",
+    "pan_ratio": 0.111,
+    "zoom_in_ratio": 0.157,
+    "zoom_out_ratio": 0.083,
+    "zoom_events_per_minute": 2.21,
+    "zoom_events": [
+      {
+        "direction": "in",
+        "start": 8.0,
+        "end": 8.5,
+        "peak_rate_per_s": 0.58
+      }
+    ],
+    "note": "Zoom is measured as image expansion. In gameplay, moving the camera forward looks the same as a digital zoom."
+  },
+  "color": {
+    "brightness_mean": 86.2,
+    "brightness_label": "balanced",
+    "brightness_variation": 4.8,
+    "contrast_mean": 50.3,
+    "contrast_label": "medium",
+    "saturation_mean": 111.5,
+    "saturation_label": "natural",
+    "average_rgb": [
+      102.5,
+      80.6,
+      72.0
+    ],
+    "tone": "warm"
+  },
+  "audio": {
+    "present": true,
+    "analyzed": true,
+    "analyzed_seconds": 27.19,
+    "mean_rms_dbfs": -32.0,
+    "peak_window_dbfs": -19.4,
+    "dynamic_range_db": 29.8,
+    "silence_ratio": 0.272,
+    "loudness_label": "quiet",
+    "onset_count": 38,
+    "onsets_per_minute": 83.9,
+    "estimated_bpm": 62.5,
+    "tempo_confidence": "low",
+    "note": "Onsets are loudness jumps, not musical beats. Tempo is only meaningful if music dominates."
+  },
+  "rhythm": {
+    "available": false,
+    "reason": "Fewer than 3 cuts"
+  },
+  "music_policy": "No audio is copied from the reference. Supply your own music that you have permission to use.",
+  "style_tags": [
+    "slow_cuts",
+    "regular_shot_lengths",
+    "calm_motion",
+    "slow_motion_likely",
+    "balanced_look",
+    "medium_contrast",
+    "natural_colors",
+    "warm_tone",
+    "quiet_audio",
+    "vertical_format"
+  ],
+  "summary": "Slow-paced edit: average shot 27.2 s, about 0.0 cuts per minute, regular shot lengths. 720x1280 (9:16, portrait) at 60.0 fps. Look: balanced, medium contrast, natural colours, warm tone. Slow motion probably used (low confidence).",
+  "planner_hints": {
+    "clip_length_seconds": {
+      "min": 13.6,
+      "target": 27.2,
+      "max": 54.4
+    },
+    "transition_mix": {
+      "cut": 1.0,
+      "fade": 0.0,
+      "flash": 0.0
+    },
+    "prefer_cuts_on_audio_onsets": false,
+    "use_slow_motion": true,
+    "use_zoom_punch_ins": false,
+    "output_orientation": "portrait",
+    "brightness_target": 86.2,
+    "contrast_target": 50.3
+  },
+  "limitations": [
+    "All values are lightweight estimates, not ground truth.",
+    "Scene detection finds hard visual cuts; dissolves, wipes and stylised transitions are not detected.",
+    "Zoom is image expansion; camera moving forward in gameplay looks the same as a digital zoom.",
+    "Slow motion is a low-confidence frame-duplication heuristic.",
+    "Tempo and audio onsets are only meaningful if music dominates the audio."
+  ]
+}
