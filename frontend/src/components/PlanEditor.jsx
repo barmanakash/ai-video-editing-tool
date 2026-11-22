@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Accordion, AccordionDetails, AccordionSummary, Alert, Box, Button, Chip, IconButton, MenuItem, Paper, Slider,
-  Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Tooltip, Typography,
+  Accordion, AccordionDetails, AccordionSummary, Alert, Box, Button, Chip, FormControlLabel, IconButton, MenuItem, Paper, Slider,
+  Stack, Switch, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Tooltip, Typography,
 } from '@mui/material';
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
@@ -10,7 +10,7 @@ import AddIcon from '@mui/icons-material/Add';
 import SaveIcon from '@mui/icons-material/Save';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import { api } from '../api.js';
-import { EFFECTS, TRANSITIONS, effectiveSeconds, fmtDuration, planSeconds } from '../util.js';
+import { EFFECTS, GRADES, PUNCH_MODES, TRANSITIONS, effectiveSeconds, fmtDuration, planSeconds } from '../util.js';
 
 const numberField = { type: 'number', size: 'small', inputProps: { step: 0.1 }, sx: { width: 96 } };
 
@@ -45,6 +45,11 @@ export default function PlanEditor({ record, videos, onSaved, notify }) {
     if (patch.effect === 'slow_motion' && clips[i].speed >= 1) clips[i].speed = 0.5;
     if (patch.effect === 'speed_up' && clips[i].speed <= 1) clips[i].speed = 1.5;
     if ((patch.effect === 'none' || patch.effect === 'zoom_in') && clips[i].speed !== 1) clips[i].speed = 1;
+    if (patch.effect === 'speed_ramp') {
+      if (clips[i].speed >= 1) clips[i].speed = 0.4;
+      if (clips[i].peak == null) clips[i].peak = Math.round(((clips[i].start + clips[i].end) / 2) * 10) / 10;
+    }
+    if (patch.effect && patch.effect !== 'speed_ramp') delete clips[i].peak;
     withClips(clips);
   };
 
@@ -70,6 +75,11 @@ export default function PlanEditor({ record, videos, onSaved, notify }) {
   const setOut = (patch) => edit({ ...plan, output: { ...plan.output, ...patch } });
   const setColor = (patch) => edit({ ...plan, color: { ...plan.color, ...patch } });
   const setAudio = (patch) => edit({ ...plan, audio: { ...plan.audio, ...patch } });
+  const setFx = (patch) => edit({ ...plan, fx: { ...(plan.fx || {}), ...patch } });
+  const titles = plan.titles || [];
+  const setTitle = (i, patch) => edit({ ...plan, titles: titles.map((t, k) => (k === i ? { ...t, ...patch } : t)) });
+  const addTitle = () => edit({ ...plan, titles: [...titles, { text: '', position: 'center', size: 'large', at: 'start', start: 0, duration: 2.5 }] });
+  const removeTitle = (i) => edit({ ...plan, titles: titles.filter((_, k) => k !== i) });
 
   const save = async () => {
     setSaving(true);
@@ -142,7 +152,19 @@ export default function PlanEditor({ record, videos, onSaved, notify }) {
                         {EFFECTS.map((x) => <MenuItem key={x} value={x}>{x.replace('_', ' ')}</MenuItem>)}
                       </TextField>
                     </TableCell>
-                    <TableCell><TextField {...numberField} inputProps={{ step: 0.25, min: 0.25, max: 4 }} value={c.speed} onChange={(e) => setClip(i, { speed: Number(e.target.value) })} /></TableCell>
+                    <TableCell>
+                      <TextField
+                        {...numberField} inputProps={{ step: 0.25, min: 0.25, max: 4 }} value={c.speed}
+                        label={c.effect === 'speed_ramp' ? 'slowest' : undefined}
+                        onChange={(e) => setClip(i, { speed: Number(e.target.value) })}
+                      />
+                      {c.effect === 'speed_ramp' && (
+                        <TextField
+                          {...numberField} label="peak (s)" value={c.peak ?? ''} sx={{ width: 96, mt: 1 }}
+                          onChange={(e) => setClip(i, { peak: Number(e.target.value) })}
+                        />
+                      )}
+                    </TableCell>
                     <TableCell>{effectiveSeconds(c).toFixed(1)}s</TableCell>
                     <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
                       <Tooltip title="Move up"><span><IconButton size="small" disabled={i === 0} onClick={() => move(i, -1)}><ArrowUpwardIcon fontSize="small" /></IconButton></span></Tooltip>
@@ -187,6 +209,9 @@ export default function PlanEditor({ record, videos, onSaved, notify }) {
           </Box>
           <Box sx={{ flex: 1 }}>
             <Typography variant="subtitle2" gutterBottom>Colour</Typography>
+            <TextField select size="small" label="Look" value={plan.color?.preset || 'none'} onChange={(e) => setColor({ preset: e.target.value })} sx={{ mb: 1, minWidth: 160 }}>
+              {GRADES.map((g) => <MenuItem key={g} value={g}>{g}</MenuItem>)}
+            </TextField>
             {[['brightness', -0.3, 0.3, 0.01], ['contrast', 0.5, 2, 0.05], ['saturation', 0.5, 2, 0.05]].map(([key, min, max, step]) => (
               <Stack key={key} direction="row" spacing={2} alignItems="center">
                 <Typography variant="caption" sx={{ width: 80 }}>{key}</Typography>
@@ -195,6 +220,42 @@ export default function PlanEditor({ record, videos, onSaved, notify }) {
             ))}
           </Box>
         </Stack>
+
+        <Box>
+          <Typography variant="subtitle2" gutterBottom>Hit effects</Typography>
+          <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap" useFlexGap>
+            <TextField select size="small" label="Timing" value={plan.fx?.punch || 'off'} onChange={(e) => setFx({ punch: e.target.value })} sx={{ minWidth: 130 }}>
+              {PUNCH_MODES.map((m) => <MenuItem key={m} value={m}>{m}</MenuItem>)}
+            </TextField>
+            <FormControlLabel control={<Switch size="small" checked={plan.fx?.zoom_punch ?? true} onChange={(e) => setFx({ zoom_punch: e.target.checked })} />} label="Zoom" />
+            <FormControlLabel control={<Switch size="small" checked={plan.fx?.flash ?? false} onChange={(e) => setFx({ flash: e.target.checked })} />} label="Flash" />
+            <FormControlLabel control={<Switch size="small" checked={plan.fx?.shake ?? false} onChange={(e) => setFx({ shake: e.target.checked })} />} label="Shake" />
+          </Stack>
+        </Box>
+
+        <Box>
+          <Stack direction="row" alignItems="center" spacing={1}>
+            <Typography variant="subtitle2" sx={{ flexGrow: 1 }}>Titles</Typography>
+            <Button size="small" startIcon={<AddIcon />} onClick={addTitle} disabled={titles.length >= 6}>Add title</Button>
+          </Stack>
+          {titles.map((t, i) => (
+            <Stack key={i} direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }} flexWrap="wrap" useFlexGap>
+              <TextField size="small" label="Text" value={t.text} onChange={(e) => setTitle(i, { text: e.target.value })} inputProps={{ maxLength: 60 }} sx={{ minWidth: 220, flexGrow: 1 }} />
+              <TextField select size="small" label="Position" value={t.position} onChange={(e) => setTitle(i, { position: e.target.value })} sx={{ width: 110 }}>
+                {['center', 'lower', 'top'].map((x) => <MenuItem key={x} value={x}>{x}</MenuItem>)}
+              </TextField>
+              <TextField select size="small" label="Size" value={t.size} onChange={(e) => setTitle(i, { size: e.target.value })} sx={{ width: 110 }}>
+                {['large', 'medium', 'small'].map((x) => <MenuItem key={x} value={x}>{x}</MenuItem>)}
+              </TextField>
+              <TextField select size="small" label="When" value={t.at} onChange={(e) => setTitle(i, { at: e.target.value })} sx={{ width: 110 }}>
+                {['start', 'end', 'time'].map((x) => <MenuItem key={x} value={x}>{x}</MenuItem>)}
+              </TextField>
+              {t.at === 'time' && <TextField {...numberField} label="At (s)" value={t.start} onChange={(e) => setTitle(i, { start: Number(e.target.value) })} />}
+              <TextField {...numberField} label="Length (s)" value={t.duration} onChange={(e) => setTitle(i, { duration: Number(e.target.value) })} />
+              <IconButton size="small" onClick={() => removeTitle(i)}><DeleteIcon fontSize="small" /></IconButton>
+            </Stack>
+          ))}
+        </Box>
 
         {plan.audio?.use_uploaded_music && (
           <Stack direction="row" spacing={2} alignItems="center">

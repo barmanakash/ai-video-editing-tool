@@ -30,7 +30,7 @@ def _decode_scan(path: Path, duration: float) -> Dict[str, Any]:
            "-vf", "fps=4,blackdetect=d=0.5:pix_th=0.10", "-f", "null", "-"]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, errors="replace",
-                           timeout=max(60.0, duration * 4))
+                           timeout=max(120.0, duration * 8))          # 4K files decode slowly on a CPU
     except subprocess.TimeoutExpired:
         return {"ok": False, "errors": ["decoding took far too long"], "black_seconds": 0.0}
     black = sum(float(m.group(3)) for m in _BLACK.finditer(r.stderr))

@@ -18,20 +18,18 @@ import re
 import shutil
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from app.config import settings
-from app.engine import audio_engine, effects_engine, transition_engine, video_cutter
+from app.engine import (audio_engine, effects_engine, encoders, speed_ramp, text_overlay, transition_engine,
+                        video_cutter)
 from app.engine.plan_schema import effective_duration
 
-OUTPUT_SIZES = {
-    ("youtube", "full"): (1920, 1080),
-    ("youtube", "test"): (854, 480),
-    ("instagram", "full"): (1080, 1920),
-    ("instagram", "test"): (480, 854),
-}
+# Kept for compatibility: every (format, quality) pair and its size. See encoders.LANDSCAPE_SIZES.
+OUTPUT_SIZES = {(fmt, q): encoders.output_size(fmt, q)
+                for fmt in ("youtube", "instagram") for q in encoders.LANDSCAPE_SIZES}
 INLINE_GRAPH_LIMIT = 8000       # longer graphs go through a script file (Windows command lines are limited)
 
 
@@ -49,20 +47,68 @@ class GraphBuild:
     graph: str
     total: float
     has_audio: bool = True
+    notes: List[str] = field(default_factory=list)
 
 
 def output_size(fmt: str, quality: str) -> tuple:
     try:
-        return OUTPUT_SIZES[(fmt, quality)]
-    except KeyError:
+        return encoders.output_size(fmt, quality)
+    except ValueError:
         raise RenderError(f"Unsupported output: format={fmt!r}, quality={quality!r}")
 
 
-def build_graph(plan: Dict[str, Any], sources: Dict[str, Dict[str, Any]], width: int, height: int) -> GraphBuild:
+def expand_pieces(plan: Dict[str, Any]) -> tuple:
+    """Split speed-ramp clips into constant-speed pieces of the same source.
+
+    Returns (pieces, transitions, internal) where transitions[k] joins piece k to piece k+1
+    and internal[k] is True for the invisible joins inside a ramp (never a real cut).
+    """
+    pieces: List[Dict[str, Any]] = []
+    trans: List[str] = []
+    internal: List[bool] = []
+    for i, clip in enumerate(plan["clips"]):
+        if clip.get("effect") == "speed_ramp":
+            parts = [{"source": clip["source"], "start": a, "end": b, "speed": s, "effect": "none"}
+                     for a, b, s in speed_ramp.segments(clip)]
+        else:
+            parts = [clip]
+        for k, piece in enumerate(parts):
+            if pieces:
+                if k > 0:
+                    trans.append("cut")
+                    internal.append(True)
+                else:
+                    tr = plan["transitions"]
+                    trans.append(tr[i - 1] if i - 1 < len(tr) else "cut")
+                    internal.append(False)
+            pieces.append(piece)
+    return pieces, trans, internal
+
+
+def _punch_times(fx: Dict[str, Any], cut_times: List[float], beats: Optional[List[float]],
+                 total: float) -> tuple:
+    """Timeline times for zoom/flash/shake punches: real cuts, or strong spaced-out music beats."""
+    mode = fx.get("punch", "off")
+    if mode == "off":
+        return [], []
+    notes: List[str] = []
+    times = list(cut_times)
+    if mode == "beats":
+        if beats:
+            times = effects_engine.thin_times(list(beats), 0.55)
+        else:
+            notes.append("punch effects: no music beats available, used the cuts instead")
+    times = [t for t in times if 0.2 < t < total - 0.1][: effects_engine.MAX_PUNCHES]
+    return times, notes
+
+
+def build_graph(plan: Dict[str, Any], sources: Dict[str, Dict[str, Any]], width: int, height: int,
+                beats: Optional[List[float]] = None) -> GraphBuild:
     """Pure function: plan -> FFmpeg inputs + filter graph (easy to unit-test without FFmpeg)."""
     out = plan["output"]
     fps, fit = int(out["fps"]), out["fit"]
-    clips, trans, audio = plan["clips"], plan["transitions"], plan["audio"]
+    audio = plan["audio"]
+    clips, trans, internal = expand_pieces(plan)
 
     input_args: List[str] = []
     lines: List[str] = []
@@ -78,16 +124,31 @@ def build_graph(plan: Dict[str, Any], sources: Dict[str, Dict[str, Any]], width:
                                                    float(audio["game_audio_volume"])))
 
     cur_v, cur_a, cur_len = "[v0]", "[a0]", durs[0]
+    cut_times: List[float] = []
     for j in range(1, len(clips)):
-        name = trans[j - 1] if j - 1 < len(trans) else "cut"
+        name = trans[j - 1]
         td = transition_engine.transition_duration(name, durs[j - 1], durs[j])
+        if not internal[j - 1]:
+            cut_times.append(cur_len - td / 2)                 # centre of the real cut or transition
         new_lines, cur_v, cur_a, cur_len = transition_engine.join_streams(
             j, cur_v, cur_a, cur_len, durs[j], name, td, fps)
         lines += new_lines
 
     total = cur_len
-    grade = effects_engine.color_filter(plan.get("color"))
-    lines.append(f"{cur_v}{grade or 'null'},format=yuv420p[vout]")
+    fx = plan.get("fx") or {}
+    color = plan.get("color") or {}
+    punch_times, notes = _punch_times(fx, cut_times, beats, total)
+    post = effects_engine.punch_chain(punch_times, width, height, bool(fx.get("zoom_punch", True)),
+                                      bool(fx.get("flash", False)), bool(fx.get("shake", False)))
+    post += effects_engine.preset_filters(color.get("preset"))
+    grade = effects_engine.color_filter(color)
+    if grade:
+        post.append(grade)
+    title_filters, title_notes = text_overlay.build_filters(plan.get("titles"), total, width, height)
+    post += title_filters
+    notes += title_notes
+    post.append("format=yuv420p")
+    lines.append(f"{cur_v}" + ",".join(post) + "[vout]")
 
     if audio.get("use_uploaded_music") and audio.get("music_path"):
         idx = len(clips)
@@ -97,7 +158,7 @@ def build_graph(plan: Dict[str, Any], sources: Dict[str, Dict[str, Any]], width:
         cur_a = "[amix]"
     fade = f"afade=t=out:st={max(total - 1.0, 0):.3f}:d=1.000," if total > 3 else ""
     lines.append(f"{cur_a}{fade}alimiter=limit=0.95[aout]")
-    return GraphBuild(input_args=input_args, graph=";\n".join(lines), total=total)
+    return GraphBuild(input_args=input_args, graph=";\n".join(lines), total=total, notes=notes)
 
 
 # ------------------------------------------------------------------ running
@@ -117,7 +178,10 @@ def _ffmpeg_major(ffmpeg: str) -> Optional[int]:
 def _creationflags() -> int:
     if os.name != "nt":
         return 0
-    return 0x08000000 | 0x00004000          # CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS
+    flags = 0x08000000                       # CREATE_NO_WINDOW
+    if settings.render_low_priority:
+        flags |= 0x00004000                  # BELOW_NORMAL_PRIORITY_CLASS: keep the PC responsive
+    return flags
 
 
 def _graph_args(graph: str, script: Path, flavour: str) -> List[str]:
@@ -168,25 +232,45 @@ def render(plan: Dict[str, Any], sources: Dict[str, Dict[str, Any]], plan_id: st
     notes: List[str] = []
     snapped = 0
     audio = plan["audio"]
-    if audio.get("use_uploaded_music") and audio.get("music_path") and audio.get("sync_cuts_to_music", True) and len(plan["clips"]) > 1:
+    fx = plan.get("fx") or {}
+    can_snap = bool(audio.get("sync_cuts_to_music", True)) and len(plan["clips"]) > 1
+    beats: List[float] = []
+    if audio.get("use_uploaded_music") and audio.get("music_path") and (can_snap or fx.get("punch") == "beats"):
         try:
-            snapped = audio_engine.snap_clips_to_beats(plan, sources, audio_engine.music_beats(audio["music_path"]))
-        except Exception as exc:                              # beat sync is a bonus, never fatal
-            notes.append(f"beat sync skipped: {exc}")
+            beats = audio_engine.music_beats(audio["music_path"])
+        except Exception as exc:                              # beat analysis is a bonus, never fatal
+            notes.append(f"beat analysis skipped: {exc}")
+    if beats and can_snap:
+        snapped = audio_engine.snap_clips_to_beats(plan, sources, beats)
 
-    built = build_graph(plan, sources, width, height)
+    built = build_graph(plan, sources, width, height, beats=beats)
+    notes += built.notes
     stamp = time.strftime("%Y%m%d_%H%M%S")
-    final = settings.outputs_dir / f"{_slug(plan.get('style'))}_{plan_id}_{out['format']}_{stamp}.mp4"
+    final = settings.outputs_dir / f"{_slug(plan.get('style'))}_{plan_id}_{out['format']}_{out['quality']}_{stamp}.mp4"
     tmp = settings.temp_dir
     part, log, script = tmp / f"{plan_id}.render.part", tmp / f"{plan_id}.render.log", tmp / f"{plan_id}.render.ffgraph"
 
-    preset, crf = ((settings.test_preset, settings.test_crf) if out["quality"] == "test"
-                   else (settings.full_preset, settings.full_crf))
+    fps_out = int(out["fps"])
+    codec, enc_pref, level = out.get("codec", "h264"), out.get("encoder", "auto"), out.get("quality_level", "standard")
+    est_mb = encoders.estimate_size_mb(width, height, fps_out, built.total, codec, level)
+    free_mb = shutil.disk_usage(settings.outputs_dir).free / 1024 ** 2
+    if free_mb < est_mb * 1.3 + settings.min_free_render_gb * 1024:
+        raise RenderError(f"Not enough free disk space: this export needs about {est_mb:.0f} MB, "
+                          f"only {free_mb:.0f} MB are free (keeping {settings.min_free_render_gb} GB spare). "
+                          "Free some space or choose a lower quality.")
+    notes += encoders.upscale_notes(plan["clips"], sources, width, height, fps_out, out["fit"])
+    choice = encoders.choose_encoder(ffmpeg, codec, enc_pref, out["quality"], level, fps_out)
+    notes += choice.notes
+    attempts = [choice]
+    if choice.hardware:                                         # hardware failed? retry on the CPU
+        attempts.append(encoders.cpu_fallback(choice, ffmpeg, codec, out["quality"], level))
+
     head = [ffmpeg, "-hide_banner", "-nostdin", "-y", "-v", "error", "-progress", "pipe:1", "-nostats"] + built.input_args
-    tail = ["-map", "[vout]", "-map", "[aout]",
-            "-c:v", "libx264", "-preset", preset, "-crf", str(crf),
-            "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
-            "-movflags", "+faststart", "-t", f"{built.total:.3f}", "-f", "mp4", str(part)]
+
+    def make_tail(enc: encoders.EncoderChoice) -> List[str]:
+        return ("-map [vout] -map [aout]".split() + enc.args +
+                ["-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart",
+                 "-t", f"{built.total:.3f}", "-f", "mp4", str(part)])
 
     if len(built.graph) <= INLINE_GRAPH_LIMIT:
         flavours = ["inline"]
@@ -194,16 +278,25 @@ def render(plan: Dict[str, Any], sources: Dict[str, Dict[str, Any]], plan_id: st
         major = _ffmpeg_major(ffmpeg)
         flavours = ["new", "old"] if (major is None or major >= 7) else ["old", "new"]
 
+    used = choice
     try:
         rc = 1
-        for n, flavour in enumerate(flavours):
-            rc = _run(head, _graph_args(built.graph, script, flavour), tail, built.total, log, progress_cb, cancel)
-            if rc == 0:
+        for a, enc in enumerate(attempts):
+            tail = make_tail(enc)
+            for n, flavour in enumerate(flavours):
+                rc = _run(head, _graph_args(built.graph, script, flavour), tail, built.total, log, progress_cb, cancel)
+                if rc == 0:
+                    break
+                text = log.read_text(errors="replace") if log.exists() else ""
+                if n < len(flavours) - 1 and re.search(r"Unrecognized option|Option not found", text):
+                    continue                                       # try the other script option name
                 break
-            text = log.read_text(errors="replace") if log.exists() else ""
-            if n < len(flavours) - 1 and re.search(r"Unrecognized option|Option not found", text):
-                continue                                       # try the other script option name
-            break
+            if rc == 0 and part.is_file() and part.stat().st_size > 0:
+                used = enc
+                break
+            if a < len(attempts) - 1:
+                notes.append(f"{enc.label} failed on this computer, so the CPU encoder was used instead")
+                part.unlink(missing_ok=True)
         if rc != 0 or not part.is_file() or part.stat().st_size == 0:
             text = log.read_text(errors="replace") if log.exists() else ""
             raise RenderError(f"FFmpeg failed (exit {rc}): {text.strip()[-1500:] or 'no error output'}")
@@ -222,6 +315,9 @@ def render(plan: Dict[str, Any], sources: Dict[str, Dict[str, Any]], plan_id: st
         "has_audio": True,
         "snapped_cuts": snapped,
         "notes": notes,
+        "encoder": used.label,
+        "fps": fps_out,
+        "size_mb": round(final.stat().st_size / 1024 ** 2, 2),
         "elapsed": round(time.time() - started, 1),
     }
 

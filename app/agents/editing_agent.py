@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from app.config import settings
+from app.engine.effects_engine import GRADE_PRESETS
 from app.engine.plan_schema import (
     ALLOWED_EFFECTS,
     ALLOWED_TRANSITIONS,
@@ -42,10 +43,11 @@ MAX_OVERSHOOT = 1.3          # drop trailing clips if the plan is >30% longer th
 SYSTEM_PROMPT = """You are a video edit planner for gaming videos. Reply with ONE JSON object and nothing else.
 Choose clips only from the listed videos. Times are seconds in the source video. Prefer the listed highlight_ranges (they are estimates from motion and audio, not confirmed events).
 Schema:
-{"style":"short label","clips":[{"source":"v1","start":12.5,"end":20.0,"speed":1.0,"effect":"none"}],"transitions":["cut","crossfade"],"color":{"brightness":0.0,"contrast":1.0,"saturation":1.0}}
+{"style":"short label","clips":[{"source":"v1","start":12.5,"end":20.0,"speed":1.0,"effect":"none"}],"transitions":["cut","crossfade"],"color":{"preset":"cinematic","brightness":0.0,"contrast":1.0,"saturation":1.0}}
 Rules:
-- effect is one of: none, slow_motion, speed_up, zoom_in.
+- effect is one of: none, slow_motion, speed_up, zoom_in, speed_ramp.
 - slow_motion needs speed below 1 (for example 0.5). speed_up needs speed above 1 (for example 1.5).
+- speed_ramp plays at normal speed, eases down to slow motion at "peak" (a time inside the clip, use the highlight peak) and eases back. Give speed 0.4 and a peak. Use it for the strongest moment.
 - transitions has exactly one entry between each pair of clips (number of clips minus 1). Allowed: cut, crossfade, fadeblack, fadewhite, slideleft.
 - The final length is the sum of (end-start)/speed. Make it close to target_duration_seconds.
 - Follow reference_style hints when present (clip length, transitions, slow motion, zoom).
@@ -63,6 +65,7 @@ class PlannerContext:
     target_duration: float
     audio: Dict[str, Any]                    # {"use_uploaded_music", "music_path", "music_volume", ...}
     aliases: Dict[str, str] = field(default_factory=dict)   # "v1" -> video id
+    look: Dict[str, Any] = field(default_factory=dict)      # user's look choices: preset, fx, titles
 
     def __post_init__(self) -> None:
         if not self.aliases:
@@ -219,6 +222,9 @@ def repair_plan(raw: Dict[str, Any], ctx: PlannerContext) -> Tuple[Dict[str, Any
         elif effect == "speed_up" and speed <= 1.0:
             speed = 1.5
             notes.append(f"{tag}: speed_up speed set to 1.5")
+        elif effect == "speed_ramp" and not (SPEED_MIN <= speed < 1.0):
+            speed = 0.4
+            notes.append(f"{tag}: speed_ramp slowest speed set to 0.4")
         elif effect == "none" and speed < 1.0:
             effect = "slow_motion"
         elif effect == "none" and speed > 1.0:
@@ -229,8 +235,13 @@ def repair_plan(raw: Dict[str, Any], ctx: PlannerContext) -> Tuple[Dict[str, Any
             notes.append(f"{tag} dropped: duplicate of an earlier clip")
             continue
         seen.add(key)
-        clips.append({"source": vid, "start": round(start, 3), "end": round(end, 3),
-                      "speed": round(speed, 3), "effect": effect})
+        item = {"source": vid, "start": round(start, 3), "end": round(end, 3),
+                "speed": round(speed, 3), "effect": effect}
+        if effect == "speed_ramp":
+            peak = _num(c.get("peak"))
+            if peak is not None:
+                item["peak"] = round(_clamp(peak, start, end), 3)
+        clips.append(item)
 
     # Keep the plan near the requested length.
     total = sum(effective_duration(c) for c in clips)
@@ -255,12 +266,23 @@ def repair_plan(raw: Dict[str, Any], ctx: PlannerContext) -> Tuple[Dict[str, Any
         "contrast": _clamp(_num(co.get("contrast"), 1.0), 0.5, 2.0),
         "saturation": _clamp(_num(co.get("saturation"), 1.0), 0.5, 2.0),
     }
+    if co.get("preset") in GRADE_PRESETS:
+        color["preset"] = co["preset"]
     style = raw.get("style") if isinstance(raw.get("style"), str) else "custom"
     return {"style": style, "clips": clips, "transitions": transitions, "color": color}, notes
 
 
 def assemble(ctx: PlannerContext, part: Dict[str, Any]) -> Dict[str, Any]:
     """Merge the model's creative choices with the user's fixed choices."""
+    look = ctx.look or {}
+    color = dict(part.get("color") or {})
+    if look.get("preset"):                      # a look the user picked always wins over the model
+        color["preset"] = look["preset"]
+    else:
+        color.setdefault("preset", "cinematic")
+    has_music = bool(ctx.audio.get("use_uploaded_music"))
+    fx = dict(look.get("fx") or {"punch": "beats" if has_music else "cuts", "zoom_punch": True,
+                                 "flash": False, "shake": False})
     return {
         "project_type": "gaming_video",
         "style": part.get("style") or "custom",
@@ -269,7 +291,9 @@ def assemble(ctx: PlannerContext, part: Dict[str, Any]) -> Dict[str, Any]:
         "clips": part["clips"],
         "transitions": part["transitions"],
         "audio": dict(ctx.audio),
-        "color": part.get("color") or {},
+        "color": color,
+        "fx": fx,
+        "titles": list(look.get("titles") or []),
     }
 
 
@@ -305,9 +329,10 @@ def heuristic_plan(ctx: PlannerContext) -> Tuple[Dict[str, Any], List[str]]:
     rest = list(cands)
     if use_slow and rest:
         best = rest.pop(0)
-        s, e = window(best, 2.5)
+        s, e = window(best, 5.0)
         if e - s >= settings.min_clip_seconds:
-            clip = {"source": best["video"], "start": s, "end": e, "speed": 0.5, "effect": "slow_motion", "score": best["score"]}
+            clip = {"source": best["video"], "start": s, "end": e, "speed": 0.4, "effect": "speed_ramp",
+                    "peak": best["peak"], "score": best["score"]}
             chosen.append(clip)
             total += effective_duration(clip)
     for c in rest:
@@ -340,12 +365,16 @@ def heuristic_plan(ctx: PlannerContext) -> Tuple[Dict[str, Any], List[str]]:
         default_tr = "fadewhite"
     transitions = []
     for i in range(len(clips) - 1):
-        into_slow = clips[i + 1]["effect"] == "slow_motion"
+        into_slow = clips[i + 1]["effect"] in ("slow_motion", "speed_ramp")
         transitions.append("crossfade" if into_slow and default_tr == "cut" else default_tr)
 
     style = "fast_paced_action" if (cl.get("target", 3.0) or 3.0) < 3.0 else "gameplay_highlights"
     notes.append("deterministic fallback planner used")
-    return {"style": style, "clips": clips, "transitions": transitions, "color": {}}, notes
+    color: Dict[str, Any] = {}
+    for look_name in ("vibrant", "clean", "cinematic"):
+        if look_name in text:
+            color = {"preset": look_name}
+    return {"style": style, "clips": clips, "transitions": transitions, "color": color}, notes
 
 
 # ------------------------------------------------------------------- main

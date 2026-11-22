@@ -1,7 +1,7 @@
 """API routes for the editing plan (Phase 4) and rendering (Phases 5-6)."""
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 from pathlib import Path
 
 from fastapi import APIRouter, Body, HTTPException
@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from app.agents import orchestrator
 from app.agents.orchestrator import OrchestratorError
 from app.config import settings
+from app.engine.text_overlay import clean_text
 from app.services import file_service as fs
 from app.services import plan_service as plans
 from app.services import render_jobs
@@ -31,10 +32,38 @@ class PlanRequest(BaseModel):
     music_path: Optional[str] = Field(default=None, description="Path to music you have permission to use (optional)")
     music_volume: float = Field(default=0.7, ge=0, le=1.5)
     use_llm: bool = Field(default=True, description="false = skip Qwen and use the deterministic planner")
+    # ---- look (Phase 7A) ----
+    grade: Literal["auto", "none", "clean", "vibrant", "cinematic"] = Field(
+        default="auto", description="Colour look. auto = the planner picks (cinematic by default)")
+    punch: Literal["auto", "off", "cuts", "beats"] = Field(
+        default="auto", description="Zoom/flash/shake hits. auto = on the music beats if you gave music, otherwise on the cuts")
+    zoom_punch: bool = Field(default=True, description="Zoom pulse on each hit")
+    flash: bool = Field(default=False, description="Brightness flash on each hit")
+    shake: bool = Field(default=False, description="Camera shake on each hit")
+    title: Optional[str] = Field(default=None, max_length=60, description="Big title shown at the start")
+    subtitle: Optional[str] = Field(default=None, max_length=60, description="Smaller line under the title")
+    end_text: Optional[str] = Field(default=None, max_length=60, description="Text shown at the end, e.g. Thanks for watching")
 
 
 def _error(exc: OrchestratorError) -> HTTPException:
     return HTTPException(status_code=exc.status, detail=str(exc))
+
+
+def _build_look(req: PlanRequest) -> Dict[str, Any]:
+    """The user's look choices, in the shape the planner and plan schema expect."""
+    punch = req.punch if req.punch != "auto" else ("beats" if req.music_path else "cuts")
+    look: Dict[str, Any] = {
+        "fx": {"punch": punch, "zoom_punch": req.zoom_punch, "flash": req.flash, "shake": req.shake},
+        "titles": [],
+    }
+    if req.grade != "auto":
+        look["preset"] = req.grade
+    for text, position, size, at in ((req.title, "center", "large", "start"), (req.subtitle, "lower", "small", "start"),
+                                     (req.end_text, "center", "medium", "end")):
+        cleaned = clean_text(text)          # characters FFmpeg could misread are removed; empty text is skipped
+        if cleaned:
+            look["titles"].append({"text": cleaned, "position": position, "size": size, "at": at, "duration": 2.5})
+    return look
 
 
 def _get_or_404(plan_id: str) -> Dict[str, Any]:
@@ -64,6 +93,7 @@ def generate_plan(req: PlanRequest) -> Dict[str, Any]:
                 music_path=req.music_path,
                 music_volume=req.music_volume,
                 use_llm=req.use_llm,
+                look=_build_look(req),
             )
     except OrchestratorError as exc:
         raise _error(exc)
@@ -109,8 +139,12 @@ def delete_plan(plan_id: str, delete_output: bool = False) -> Dict[str, Any]:
 # ----------------------------------------------------------------- rendering
 class RenderRequest(BaseModel):
     format: Optional[str] = Field(default=None, description="Change the output: youtube (16:9) or instagram (9:16). Leave empty to keep the plan's setting.")
-    quality: Optional[str] = Field(default=None, description="test (small, fast preview) or full (1920x1080 / 1080x1920)")
+    quality: Optional[str] = Field(default=None, description="test (480p preview, fast) | full (1080p) | 1440p | 4k")
     fit: Optional[str] = Field(default=None, description="crop (fill the frame) or pad (keep everything, add black bars)")
+    fps: Optional[int] = Field(default=None, ge=24, le=60, description="Frames per second, e.g. 30 or 60")
+    codec: Optional[Literal["h264", "hevc"]] = Field(default=None, description="h264 (plays everywhere) or hevc (smaller files)")
+    encoder: Optional[Literal["auto", "cpu", "qsv"]] = Field(default=None, description="auto, cpu, or qsv (Intel hardware, falls back to cpu)")
+    quality_level: Optional[Literal["fast", "standard", "high"]] = Field(default=None, description="Speed versus file quality")
 
 
 @router.post("/{plan_id}/render", status_code=202)
@@ -123,8 +157,9 @@ def start_render(plan_id: str, req: Optional[RenderRequest] = Body(default=None)
     try:
         if render_jobs.is_active(plan_id):
             raise HTTPException(status_code=409, detail="This plan is already being rendered")
-        if req is not None and (req.format or req.quality or req.fit):
-            orchestrator.set_output(plan_id, req.format, req.quality, req.fit)
+        extra = {"fps": req.fps, "codec": req.codec, "encoder": req.encoder, "quality_level": req.quality_level} if req else {}
+        if req is not None and any(v is not None for v in (req.format, req.quality, req.fit, *extra.values())):
+            orchestrator.set_output(plan_id, req.format, req.quality, req.fit, **extra)
         orchestrator.check_renderable(plan_id)
         job = render_jobs.start(plan_id)
     except OrchestratorError as exc:

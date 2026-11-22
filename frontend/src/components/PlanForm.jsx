@@ -25,6 +25,14 @@ export default function PlanForm({ videos, analyzed, notify, onCreated, goToVide
   const [music, setMusic] = useState('');
   const [musicVolume, setMusicVolume] = useState(0.7);
   const [useLlm, setUseLlm] = useState(true);
+  const [grade, setGrade] = useState('auto');
+  const [punch, setPunch] = useState('auto');
+  const [zoomPunch, setZoomPunch] = useState(true);
+  const [flash, setFlash] = useState(false);
+  const [shake, setShake] = useState(false);
+  const [title, setTitle] = useState('');
+  const [subtitle, setSubtitle] = useState('');
+  const [endText, setEndText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -41,6 +49,14 @@ export default function PlanForm({ videos, analyzed, notify, onCreated, goToVide
         music_path: music.trim().replace(/^"|"$/g, '') || null,
         music_volume: musicVolume,
         use_llm: useLlm,
+        grade,
+        punch,
+        zoom_punch: zoomPunch,
+        flash,
+        shake,
+        title: title.trim() || null,
+        subtitle: subtitle.trim() || null,
+        end_text: endText.trim() || null,
       };
       const record = await api.generatePlan(body);
       onCreated(record);
@@ -147,6 +163,43 @@ export default function PlanForm({ videos, analyzed, notify, onCreated, goToVide
             <Slider value={musicVolume} min={0} max={1.5} step={0.05} onChange={(_, v) => setMusicVolume(v)} disabled={!music.trim()} />
           </Box>
         </Stack>
+
+        <Box>
+          <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Look and effects</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            The strongest moment gets an eased speed ramp automatically. Effects hit on the music beats, or on the cuts if there is no music.
+          </Typography>
+          <Stack spacing={2}>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+              <TextField select fullWidth label="Colour look" value={grade} onChange={(e) => setGrade(e.target.value)}>
+                <MenuItem value="auto">Auto (cinematic)</MenuItem>
+                <MenuItem value="none">None</MenuItem>
+                <MenuItem value="clean">Clean and sharp</MenuItem>
+                <MenuItem value="vibrant">Vibrant</MenuItem>
+                <MenuItem value="cinematic">Cinematic</MenuItem>
+              </TextField>
+              <TextField select fullWidth label="Hit effects timing" value={punch} onChange={(e) => setPunch(e.target.value)}>
+                <MenuItem value="auto">Auto (beats if music, else cuts)</MenuItem>
+                <MenuItem value="off">Off</MenuItem>
+                <MenuItem value="cuts">On the cuts</MenuItem>
+                <MenuItem value="beats">On the music beats</MenuItem>
+              </TextField>
+            </Stack>
+            <Stack direction="row" spacing={2} flexWrap="wrap" useFlexGap>
+              <FormControlLabel control={<Switch checked={zoomPunch} onChange={(e) => setZoomPunch(e.target.checked)} />} label="Zoom punch" />
+              <FormControlLabel control={<Switch checked={flash} onChange={(e) => setFlash(e.target.checked)} />} label="Flash" />
+              <FormControlLabel control={<Switch checked={shake} onChange={(e) => setShake(e.target.checked)} />} label="Camera shake" />
+            </Stack>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+              <TextField fullWidth label="Title at the start (optional)" value={title} onChange={(e) => setTitle(e.target.value)} inputProps={{ maxLength: 60 }} />
+              <TextField fullWidth label="Subtitle (optional)" value={subtitle} onChange={(e) => setSubtitle(e.target.value)} inputProps={{ maxLength: 60 }} />
+              <TextField fullWidth label="End text (optional)" value={endText} onChange={(e) => setEndText(e.target.value)} inputProps={{ maxLength: 60 }} />
+            </Stack>
+            <Typography variant="caption" color="text.secondary">
+              Titles can use letters, digits, spaces and . , ! ? &amp; ( ) + - # @ / (other characters are removed).
+            </Typography>
+          </Stack>
+        </Box>
 
         <FormControlLabel
           control={<Switch checked={useLlm} onChange={(e) => setUseLlm(e.target.checked)} />}

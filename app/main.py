@@ -23,6 +23,7 @@ from app.services import plan_service
 from app.engine import renderer
 from app.services.system_check import run_checks
 from app.api_gameplay import router as gameplay_router
+from app.api_export import router as export_router
 from app.api_plan import router as plan_router
 from app.api_reference import router as reference_router
 
@@ -43,6 +44,7 @@ app = FastAPI(title="Local AI Gaming Video Editor", version="1.0.0", lifespan=li
 app.include_router(reference_router)
 app.include_router(gameplay_router)
 app.include_router(plan_router)
+app.include_router(export_router)
 
 
 class RegisterRequest(BaseModel):

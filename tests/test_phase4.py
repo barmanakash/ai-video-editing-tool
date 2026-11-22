@@ -185,11 +185,15 @@ def test_fallback_plan_is_valid_and_follows_instructions():
         {"style": part["style"], "clips": part["clips"], "transitions": part["transitions"]}, SOURCES)
     total = sum(effective_duration(c) for c in plan["clips"])
     assert 20 <= total <= 38
-    assert any(c["effect"] == "slow_motion" and c["speed"] < 1 for c in plan["clips"])   # "slow motion" requested
+    assert any(c["effect"] == "speed_ramp" and c["speed"] < 1 for c in plan["clips"])   # "slow motion" requested -> eased ramp
     assert set(plan["transitions"]) == {"crossfade"}                                      # "smooth" requested
-    # builds up to the strongest moment: the best highlight (video a, ~30 s) is slow motion and comes last
-    assert plan["clips"][-1]["effect"] == "slow_motion"
+    # builds up to the strongest moment: the best highlight (video a, ~30 s) is the speed ramp and comes last
+    assert plan["clips"][-1]["effect"] == "speed_ramp"
     assert 26 <= plan["clips"][-1]["start"] <= 34
+    assert plan["clips"][-1]["peak"] == pytest.approx(30.0, abs=0.01)
+    from app.agents.editing_agent import assemble
+    assembled = validate_plan(assemble(ctx, part), SOURCES)             # defaults for a pro look
+    assert assembled["color"]["preset"] == "cinematic" and assembled["fx"]["punch"] == "cuts"
 
 
 def test_fallback_without_any_highlights_samples_videos():

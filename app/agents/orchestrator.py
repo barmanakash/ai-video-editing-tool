@@ -50,11 +50,15 @@ def build_sources(video_ids: Optional[List[str]] = None) -> Dict[str, Dict[str, 
                 raise OrchestratorError(f"Video '{r['id']}' has role '{r.get('role')}', expected 'gameplay'", 400)
             continue
         meta = r["metadata"]
+        vmeta = meta.get("video") or {}
         out[r["id"]] = {
             "duration_seconds": float(meta["duration_seconds"]),
             "has_audio": meta.get("audio") is not None,
             "path": r["path"],
             "name": r.get("original_name"),
+            "width": vmeta.get("width"),
+            "height": vmeta.get("height"),
+            "fps": vmeta.get("fps"),
             "available": Path(r["path"]).is_file(),
         }
     return out
@@ -112,6 +116,7 @@ def create_plan(
     music_path: Optional[str] = None,
     music_volume: float = 0.7,
     use_llm: bool = True,
+    look: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Analyse (if needed), ask the planner for an editing plan, validate and save it as a draft."""
     ids = list(dict.fromkeys(gameplay_ids))           # de-duplicate, keep order
@@ -141,6 +146,7 @@ def create_plan(
             "music_volume": music_volume,
             "sync_cuts_to_music": True,
         },
+        look=look or {},
     )
     try:
         plan, meta = generate_plan(ctx, use_llm=use_llm)
@@ -159,6 +165,7 @@ def create_plan(
             "format": fmt,
             "quality": quality,
             "fit": fit,
+            "look": look or {},
         },
         "planner": meta,
         "plan": plan,
@@ -205,15 +212,19 @@ def check_renderable(plan_id: str) -> Dict[str, Any]:
     return record
 
 
-def set_output(plan_id: str, fmt: Optional[str] = None, quality: Optional[str] = None, fit: Optional[str] = None) -> Dict[str, Any]:
-    """Change only the output format / quality / fit of a plan (validated like any other edit)."""
+def set_output(plan_id: str, fmt: Optional[str] = None, quality: Optional[str] = None, fit: Optional[str] = None,
+               **extra: Any) -> Dict[str, Any]:
+    """Change only the output settings of a plan (format, quality, fit, fps, codec, encoder, quality_level).
+
+    Validated like any other edit, so unknown values are rejected.
+    """
     try:
         record = plans.load_plan(plan_id)
     except fs.RecordNotFoundError:
         raise OrchestratorError("Plan not found", 404)
     plan = dict(record["plan"])
     out = dict(plan.get("output") or {})
-    for key, value in (("format", fmt), ("quality", quality), ("fit", fit)):
+    for key, value in (("format", fmt), ("quality", quality), ("fit", fit), *extra.items()):
         if value is not None:
             out[key] = value
     plan["output"] = out

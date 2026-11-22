@@ -78,7 +78,7 @@ def snap_clips_to_beats(plan: Dict[str, Any], sources: Dict[str, Dict[str, Any]]
         join = pos + dur - td / 2                 # centre of the cut or transition
         beat = _nearest(beats, join)
         if beat is not None and 0.01 < abs(beat - join) <= tolerance:
-            speed = float(clip["speed"])
+            speed = 1.0 if clip.get("effect") == "speed_ramp" else float(clip["speed"])   # a ramp ends at normal speed
             new_end = float(clip["end"]) + (beat - join) * speed
             limit = float(sources[clip["source"]]["duration_seconds"])
             length = new_end - float(clip["start"])
