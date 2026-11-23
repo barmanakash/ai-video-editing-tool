@@ -1,13 +1,15 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import {
-  Alert, AppBar, Box, Container, Snackbar, Tab, Tabs, Toolbar, Typography,
-} from '@mui/material';
-import MovieFilterIcon from '@mui/icons-material/MovieFilter';
+import { Alert, Box, Drawer, IconButton, Snackbar } from '@mui/material';
+import MenuIcon from '@mui/icons-material/Menu';
 import { api } from './api.js';
+import { t } from './theme.js';
+import Sidebar, { Brand } from './components/Sidebar.jsx';
 import VideoLibrary from './components/VideoLibrary.jsx';
 import PlanForm from './components/PlanForm.jsx';
 import PlansPage from './components/PlansPage.jsx';
 import SystemStatus from './components/SystemStatus.jsx';
+
+const SIDEBAR_WIDTH = 276;
 
 export default function App() {
   const [tab, setTab] = useState(0);
@@ -16,6 +18,8 @@ export default function App() {
   const [plans, setPlans] = useState([]);
   const [selectedPlan, setSelectedPlan] = useState(null);
   const [toast, setToast] = useState(null);
+  const [health, setHealth] = useState('checking');
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const notify = useCallback((message, severity = 'info') => setToast({ message, severity, key: Date.now() }), []);
 
@@ -42,54 +46,89 @@ export default function App() {
     }
   }, [notify]);
 
+  const checkHealth = useCallback(async () => {
+    try {
+      const h = await api.health();
+      setHealth((h.ok ?? h.status === 'ok') ? 'ready' : 'attention');
+    } catch {
+      setHealth('offline');
+    }
+  }, []);
+
   useEffect(() => {
     refreshVideos();
     refreshPlans();
-  }, [refreshVideos, refreshPlans]);
+    checkHealth();
+    const id = setInterval(checkHealth, 60000);
+    return () => clearInterval(id);
+  }, [refreshVideos, refreshPlans, checkHealth]);
+
+  const go = (id) => { setTab(id); setMenuOpen(false); window.scrollTo({ top: 0 }); };
 
   const onPlanCreated = (record) => {
     setSelectedPlan(record.id);
     refreshPlans();
-    setTab(2);
+    go(2);
     notify(`Plan created (${record.planner?.mode || 'unknown'} planner). Review it, then render.`, 'success');
   };
 
+  const counts = { videos: videos.length, plans: plans.length };
+
   return (
     <Box sx={{ minHeight: '100vh' }}>
-      <AppBar position="sticky" color="default" elevation={0} sx={{ borderBottom: 1, borderColor: 'divider' }}>
-        <Toolbar>
-          <MovieFilterIcon sx={{ mr: 1.5 }} color="primary" />
-          <Typography variant="h6" sx={{ flexGrow: 1 }}>Local AI Gaming Video Editor</Typography>
-          <Typography variant="caption" color="text.secondary">Everything runs on this computer</Typography>
-        </Toolbar>
-        <Tabs value={tab} onChange={(_, v) => setTab(v)} variant="scrollable" sx={{ px: 2 }}>
-          <Tab label="1. Videos" />
-          <Tab label="2. Create plan" />
-          <Tab label={`3. Plans & render${plans.length ? ` (${plans.length})` : ''}`} />
-          <Tab label="System" />
-        </Tabs>
-      </AppBar>
+      {/* Desktop sidebar */}
+      <Box
+        component="aside"
+        sx={{
+          display: { xs: 'none', md: 'block' }, position: 'fixed', top: 0, left: 0, bottom: 0, width: SIDEBAR_WIDTH,
+          bgcolor: t.sidebar, borderRight: `1px solid ${t.line}`, zIndex: 10,
+        }}
+      >
+        <Sidebar tab={tab} onSelect={go} counts={counts} health={health} />
+      </Box>
 
-      <Container maxWidth="xl" sx={{ py: 3 }}>
-        {tab === 0 && (
-          <VideoLibrary videos={videos} analyzed={analyzed} refresh={refreshVideos} notify={notify} />
-        )}
-        {tab === 1 && (
-          <PlanForm videos={videos} analyzed={analyzed} notify={notify} onCreated={onPlanCreated} goToVideos={() => setTab(0)} />
-        )}
-        {tab === 2 && (
-          <PlansPage
-            plans={plans}
-            videos={videos}
-            selectedId={selectedPlan}
-            onSelect={setSelectedPlan}
-            refreshPlans={refreshPlans}
-            notify={notify}
-            goCreate={() => setTab(1)}
-          />
-        )}
-        {tab === 3 && <SystemStatus notify={notify} />}
-      </Container>
+      {/* Mobile top bar + drawer */}
+      <Box
+        sx={{
+          display: { xs: 'flex', md: 'none' }, alignItems: 'center', gap: 1.5, px: 2, py: 1.25,
+          position: 'sticky', top: 0, zIndex: 20, bgcolor: 'rgba(251, 248, 243, 0.92)',
+          backdropFilter: 'blur(10px)', borderBottom: `1px solid ${t.line}`,
+        }}
+      >
+        <IconButton onClick={() => setMenuOpen(true)} aria-label="Open menu"><MenuIcon /></IconButton>
+        <Brand />
+      </Box>
+      <Drawer
+        open={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        PaperProps={{ sx: { width: SIDEBAR_WIDTH, bgcolor: t.sidebar, border: 0 } }}
+        sx={{ display: { md: 'none' } }}
+      >
+        <Sidebar tab={tab} onSelect={go} counts={counts} health={health} />
+      </Drawer>
+
+      <Box component="main" sx={{ ml: { md: `${SIDEBAR_WIDTH}px` }, px: { xs: 2, sm: 3, md: 5 }, py: { xs: 3, md: 5 } }}>
+        <Box key={tab} sx={{ maxWidth: 1240, mx: 'auto', animation: 'fadeUp .3s ease both' }}>
+          {tab === 0 && (
+            <VideoLibrary videos={videos} analyzed={analyzed} refresh={refreshVideos} notify={notify} />
+          )}
+          {tab === 1 && (
+            <PlanForm videos={videos} analyzed={analyzed} notify={notify} onCreated={onPlanCreated} goToVideos={() => go(0)} />
+          )}
+          {tab === 2 && (
+            <PlansPage
+              plans={plans}
+              videos={videos}
+              selectedId={selectedPlan}
+              onSelect={setSelectedPlan}
+              refreshPlans={refreshPlans}
+              notify={notify}
+              goCreate={() => go(1)}
+            />
+          )}
+          {tab === 3 && <SystemStatus notify={notify} onChecked={checkHealth} />}
+        </Box>
+      </Box>
 
       <Snackbar
         key={toast?.key}
@@ -98,7 +137,11 @@ export default function App() {
         onClose={() => setToast(null)}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
       >
-        {toast ? <Alert severity={toast.severity} variant="filled" onClose={() => setToast(null)}>{toast.message}</Alert> : undefined}
+        {toast ? (
+          <Alert severity={toast.severity} variant="filled" onClose={() => setToast(null)} sx={{ boxShadow: t.shadowLift }}>
+            {toast.message}
+          </Alert>
+        ) : undefined}
       </Snackbar>
     </Box>
   );
