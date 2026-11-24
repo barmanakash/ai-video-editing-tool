@@ -122,7 +122,7 @@ def choose_encoder(ffmpeg: str, codec: str, encoder: str, quality: str, level: s
                 args += ["-tag:v", "hvc1"]
             return EncoderChoice(hw_name, args, True, f"{'HEVC' if want_hevc else 'H.264'} (Intel QSV hardware)", notes)
         if encoder == "qsv":
-            notes.append("Intel QSV is not usable on this computer: used the CPU encoder instead")
+            notes.append("Intel Quick Sync (QSV) is not usable on this computer: used the CPU encoder instead")
 
     # --- CPU ---
     if want_hevc and encoder_listed(ffmpeg, "libx265"):

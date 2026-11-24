@@ -293,6 +293,9 @@ def render_plan(
         "expected_duration": round(result["expected_duration"], 2),
         "render_seconds": result["elapsed"],
         "beat_snapped_cuts": result["snapped_cuts"],
+        "encoder": result.get("encoder"),
+        "fps": result.get("fps"),
+        "size_mb": result.get("size_mb"),
         "notes": result["notes"],
         "quality_report": report,
     }

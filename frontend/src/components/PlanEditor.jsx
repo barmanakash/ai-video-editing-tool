@@ -277,8 +277,10 @@ export default function PlanEditor({ record, videos, onSaved, notify }) {
                 <MenuItem value="instagram">Instagram 9:16</MenuItem>
               </TextField>
               <TextField select size="small" label="Quality" value={plan.output.quality} onChange={(e) => setOut({ quality: e.target.value })}>
-                <MenuItem value="test">Test</MenuItem>
-                <MenuItem value="full">Full</MenuItem>
+                <MenuItem value="test">Preview 480p</MenuItem>
+                <MenuItem value="full">1080p</MenuItem>
+                <MenuItem value="1440p">1440p</MenuItem>
+                <MenuItem value="4k">4K</MenuItem>
               </TextField>
               <TextField select size="small" label="Framing" value={plan.output.fit} onChange={(e) => setOut({ fit: e.target.value })}>
                 <MenuItem value="crop">Crop</MenuItem>

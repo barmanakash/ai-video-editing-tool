@@ -200,8 +200,10 @@ export default function PlanForm({ videos, analyzed, notify, onCreated, goToVide
               <Segmented
                 label="Quality" value={quality} onChange={setQuality}
                 options={[
-                  { value: 'test', label: 'Test (fast)', icon: <SpeedIcon /> },
-                  { value: 'full', label: 'Full 1080p', icon: <HighQualityIcon /> },
+                  { value: 'test', label: 'Preview 480p', icon: <SpeedIcon /> },
+                  { value: 'full', label: '1080p', icon: <HighQualityIcon /> },
+                  { value: '1440p', label: '1440p' },
+                  { value: '4k', label: '4K' },
                 ]}
               />
               <Segmented
@@ -272,7 +274,7 @@ export default function PlanForm({ videos, analyzed, notify, onCreated, goToVide
             <SummaryRow label="Videos" value={selected.length ? `${selected.length} selected` : 'None yet'} />
             <SummaryRow label="Reference" value={reference?.original_name || 'None'} />
             <SummaryRow label="Length" value={`about ${fmtDuration(target)}`} />
-            <SummaryRow label="Format" value={`${format === 'youtube' ? 'YouTube' : 'Instagram'} · ${quality === 'test' ? 'test' : 'full'}`} />
+            <SummaryRow label="Format" value={`${format === 'youtube' ? 'YouTube' : 'Instagram'} · ${{ test: 'preview 480p', full: '1080p', '1440p': '1440p', '4k': '4K' }[quality] || quality}`} />
             <SummaryRow label="Music" value={music.trim() ? 'Yes' : 'No'} />
           </Box>
           <Box sx={{ mt: 1.5, p: 1.5, borderRadius: '14px', bgcolor: t.surface2 }}>
